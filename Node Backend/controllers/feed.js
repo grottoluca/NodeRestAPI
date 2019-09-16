@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { validationResult } = require('express-validator');
+const io = require('../socket');
 const Post = require('../models/post');
 const User = require('../models/user');
 
@@ -10,7 +11,9 @@ exports.getPosts = async (req, res, next) => {
     let totalItems;
     try {
         const totalItems = await Post.find().countDocuments()
-        const post = await Post.find()
+        const posts = await Post.find()
+            .populate('creator')
+            .sort({ createdAt: -1 })
             .skip((currentPage - 1) * perPage)
             .limit(perPage)
         res.status(200).json({
@@ -77,6 +80,7 @@ exports.createPost = (req, res, next) => {
             return user.save();
         })
         .then(result => {
+            io.getIO().emit('posts', { action: 'create', post: { ...post._doc, creator: { _id: req.userId, name: user.name } } });
             res.status(201).json({
                 message: 'Post created successfully',
                 post: post,
@@ -110,14 +114,14 @@ exports.updatePost = (req, res, next) => {
         error.statusCode = 422;
         throw error;
     }
-    Post.findById(postId)
+    Post.findById(postId).populate('creator')
         .then(post => {
             if (!post) {
                 const error = new Error('Could not find post');
                 error.statusCode = 422;
                 throw error;
             }
-            if (post.creator.toString() !== req.userId) {
+            if (post.creator._id.toString() !== req.userId) {
                 const err = new Error('Not authorized');
                 err.statusCode = 403;
                 throw err;
@@ -131,6 +135,7 @@ exports.updatePost = (req, res, next) => {
             return post.save();
         })
         .then(result => {
+            io.getIO().emit('post', { action: 'update', post: result })
             res.status(200).json({
                 message: 'Post updated',
                 post: result
